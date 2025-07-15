@@ -1,4 +1,4 @@
-name = "r2-cdn-proxy"
+name = "cdn"
 main = "index.js"
 compatibility_date = "2025-07-15"
 
