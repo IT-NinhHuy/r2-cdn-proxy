@@ -1,0 +1,8 @@
+name = "r2-cdn-proxy"
+main = "index.js"
+compatibility_date = "2025-07-15"
+
+[[r2_buckets]]
+binding = "R2_BUCKET"
+bucket_name = "your-bucket-name"
+preview_bucket_name = "your-bucket-name"
