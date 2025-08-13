@@ -29,7 +29,20 @@ export default {
     const url = new URL(request.url);
     const objectKey = url.pathname.slice(1);
 
-    const object = await env.R2_BUCKET.get(objectKey);
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*'
+        }
+      });
+    }
+
+    const object =
+      request.method === 'HEAD'
+        ? await env.R2_BUCKET.head(objectKey)
+        : await env.R2_BUCKET.get(objectKey);
 
     if (!object) {
       return new Response("File not found", { status: 404 });
@@ -37,16 +50,18 @@ export default {
 
     const mimeType = object.httpMetadata?.contentType || getMimeType(objectKey);
 
-    return new Response(object.body, {
-      headers: {
-        'Content-Type': mimeType,
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-        'Access-Control-Allow-Headers': '*',
-        'Cache-Control': 'public, max-age=31536000',
-        'ETag': object.httpMetadata?.etag || '',
-        'Content-Length': object.size
-      }
+    const headers = {
+      'Content-Type': mimeType,
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': '*',
+      'Cache-Control': object.httpMetadata?.cacheControl || 'public, max-age=31536000',
+      'ETag': object.etag || '',
+      'Content-Length': object.size
+    };
+
+    return new Response(request.method === 'HEAD' ? null : object.body, {
+      headers
     });
   }
 }
