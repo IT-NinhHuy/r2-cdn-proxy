@@ -19,7 +19,7 @@ const MIME_TYPES = {
   ttf: "font/ttf",
   eot: "application/vnd.ms-fontobject",
 
-  // 🔹 Unity / WebGL
+  // Unity / WebGL
   wasm: "application/wasm",
   bundle: "application/octet-stream",
   data: "application/octet-stream",
@@ -42,7 +42,7 @@ export default {
   async fetch(request, env, ctx) {
     const { method } = request;
 
-    // ✅ Preflight CORS
+    // Preflight CORS
     if (method === "OPTIONS") {
       return new Response(null, {
         status: 204,
@@ -61,13 +61,29 @@ export default {
 
     const url = new URL(request.url);
 
-    // "/Build/file" -> "Build/file", "/" -> "index.html" (tuỳ bạn có index.html hay không)
-    let objectKey = url.pathname.replace(/^\/+/, "");
-    if (!objectKey) {
-      objectKey = "index.html"; // hoặc comment dòng này nếu không dùng
+    // Chuẩn hoá key: luôn dùng method GET cho cache
+    const cacheKey = new Request(url.toString(), { method: "GET" });
+    const cache = caches.default;
+
+    // 1) Thử lấy từ EDGE cache trước
+    let cached = await cache.match(cacheKey);
+    if (cached) {
+      // Với HEAD, trả về chỉ header (body không cần nhưng có cũng không sao)
+      if (method === "HEAD") {
+        return new Response(null, {
+          status: cached.status,
+          headers: cached.headers,
+        });
+      }
+      return cached;
     }
 
-    // Lấy object từ R2
+    // 2) Không có trong cache -> đọc từ R2
+    let objectKey = url.pathname.replace(/^\/+/, ""); // "/Build/x" -> "Build/x"
+    if (!objectKey) {
+      objectKey = "index.html"; // nếu không dùng index.html thì bỏ dòng này
+    }
+
     const object = await env.R2_BUCKET.get(objectKey);
 
     if (!object) {
@@ -77,41 +93,49 @@ export default {
       });
     }
 
-    const mimeType = object.httpMetadata?.contentType || getMimeType(objectKey);
+    const mimeType =
+      object.httpMetadata?.contentType || getMimeType(objectKey);
     const etag = object.etag;
 
-    const baseHeaders = {
+    const headers = {
       ...corsHeaders(),
       "Content-Type": mimeType,
       "Cache-Control": "public, max-age=31536000, immutable",
-      "ETag": etag,
     };
 
+    if (etag) {
+      headers["ETag"] = etag;
+    }
     if (object.size != null) {
-      baseHeaders["Content-Length"] = object.size;
+      headers["Content-Length"] = object.size;
     }
 
-    // ✅ Hỗ trợ If-None-Match để client cache tốt hơn
+    // Hỗ trợ If-None-Match (304 Not Modified)
     const ifNoneMatch = request.headers.get("If-None-Match");
-    if (ifNoneMatch && ifNoneMatch === etag) {
+    if (ifNoneMatch && etag && ifNoneMatch === etag) {
       return new Response(null, {
         status: 304,
-        headers: baseHeaders,
+        headers,
       });
     }
 
-    // HEAD: chỉ trả header, không trả body
+    // 3) Tạo response từ R2
+    const response = new Response(object.body, {
+      status: 200,
+      headers,
+    });
+
+    // 4) Lưu vào EDGE cache (async, không chặn response)
+    ctx.waitUntil(cache.put(cacheKey, response.clone()));
+
+    // 5) Với HEAD chỉ trả header, không cần body
     if (method === "HEAD") {
       return new Response(null, {
         status: 200,
-        headers: baseHeaders,
+        headers,
       });
     }
 
-    // GET: trả nội dung file
-    return new Response(object.body, {
-      status: 200,
-      headers: baseHeaders,
-    });
+    return response;
   },
 };
